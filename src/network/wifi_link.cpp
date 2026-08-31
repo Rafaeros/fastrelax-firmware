@@ -7,6 +7,10 @@
 
 namespace {
 
+// Folga entre desassociar e associar de novo. Não precisa ser exato: é só o
+// tempo de o rádio sair do estado de "connecting".
+constexpr unsigned long kReconnectSettleMs = 800;
+
 /**
  * Sobe a conexão com o que estiver gravado.
  *
@@ -36,7 +40,7 @@ const char* WifiLink::name() const {
   return "wi-fi";
 }
 
-void WifiLink::begin() {
+void WifiLink::startAsync() {
   network_config::Credentials creds = network_config::current();
 
   Serial.printf("conectando em %s%s...\n", creds.ssid.c_str(),
@@ -51,6 +55,11 @@ void WifiLink::begin() {
   // comandos do backend.
   WiFi.setSleep(false);
   connectWith(creds);
+  lastAttemptMs_ = millis();
+}
+
+void WifiLink::begin() {
+  startAsync();
 
   unsigned long deadline = millis() + WIFI_CONNECT_TIMEOUT_MS;
   while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
@@ -63,31 +72,54 @@ void WifiLink::begin() {
     Serial.println("nao foi possivel conectar; tentando de novo em background");
     // Sem rede o IP ainda não existe, mas o MAC já vale para adiantar o cadastro.
     Serial.printf("MAC address: %s\n", macAddress().c_str());
+    // Já gastamos a janela do boot esperando: a próxima tentativa é imediata,
+    // não daqui a WIFI_RETRY_MS.
+    lastAttemptMs_ = 0;
   }
 }
 
 void WifiLink::loop() {
   if (isConnected()) {
+    retryPending_ = false;
     return;
   }
 
   unsigned long now = millis();
+
+  // Desassociar e associar são assíncronos: o esp_wifi_disconnect() volta antes
+  // de o rádio parar, e um connect emendado nele é recusado com "sta is
+  // connecting" — a tentativa se perde inteira, e a seguinte também, para
+  // sempre. Por isso a reconexão acontece em duas passadas, com uma folga no
+  // meio para o rádio assentar.
+  if (retryPending_) {
+    if (now - lastAttemptMs_ < kReconnectSettleMs) {
+      return;
+    }
+
+    retryPending_ = false;
+    lastAttemptMs_ = now;
+    // Relê a NVS a cada tentativa: se a configuração chegou enquanto a cadeira
+    // estava fora do ar, a próxima tentativa já usa a rede nova, sem reiniciar.
+    connectWith(network_config::current());
+    return;
+  }
+
   if (now - lastAttemptMs_ < WIFI_RETRY_MS) {
     return;
   }
 
   lastAttemptMs_ = now;
+  retryPending_ = true;
   WiFi.disconnect();
-  // Relê a NVS a cada tentativa: se a configuração chegou enquanto a cadeira
-  // estava fora do ar, a próxima tentativa já usa a rede nova, sem reiniciar.
-  connectWith(network_config::current());
 }
 
 void WifiLink::applyNetworkConfig() {
   Serial.println("aplicando configuracao de rede recebida");
   WiFi.disconnect();
-  connectWith(network_config::current());
+  // Mesmo cuidado do loop(): associar emendado no disconnect é recusado. O
+  // connect sai na passada seguinte, já com as credenciais novas da NVS.
   lastAttemptMs_ = millis();
+  retryPending_ = true;
 }
 
 bool WifiLink::isConnected() const {

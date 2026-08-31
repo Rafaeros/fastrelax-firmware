@@ -10,7 +10,7 @@
 //
 //   relay/     acionamento do pino
 //   session/   máquina de estados do tempo de uso
-//   network/   enlace (Wi-Fi hoje, Ethernet preparado) e reconexão
+//   network/   enlace (cabo preferido, Wi-Fi de reserva) e reconexão
 //   backend/   heartbeat com o fastrelax-api
 //   api/       servidor HTTP do dispositivo e página local
 //   mqtt/      transporte alternativo ao HTTP (preparado, desligado)

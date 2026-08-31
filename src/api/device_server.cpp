@@ -132,6 +132,9 @@ void handleStatus() {
   json += "\"mac\":\"" + network::macAddress() + "\",";
   json += "\"ip\":\"" + network::ipAddress() + "\",";
   json += "\"rssi\":" + String(network::signalStrength()) + ",";
+  // Qual meio está carregando o tráfego agora. Com o failover ligado isto muda
+  // sozinho, e é a única forma de saber se a cadeira caiu para o Wi-Fi.
+  json += "\"link\":\"" + String(network::linkName()) + "\",";
   // Diz se a cadeira ainda roda a rede de fábrica: é o que o backend usa para
   // marcar a configuração como aplicada de verdade, e não só como enviada.
   json += "\"ssid\":\"" + network_config::current().ssid + "\",";

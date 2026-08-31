@@ -76,27 +76,50 @@
 // Teto do teste: mesmo pedindo mais, o relé não fica ligado além disto.
 #define RELAY_TEST_MAX_SECONDS  60
 
-// ---- Ethernet (preparado, ainda não usado) ----
-// A instalação atual é Wi-Fi. Quando a cadeira for para um ponto com cabo,
-// ligue ETHERNET_ENABLED em 1: o firmware inteiro troca de enlace, porque
-// heartbeat, servidor HTTP e página local falam com a fachada de rede e não
-// com o Wi-Fi. Confira os pinos abaixo contra o módulo PHY usado — os valores
-// são os do LAN8720 na ligação mais comum com o ESP32.
-#define ETHERNET_ENABLED        0
+// ---- Ethernet ----
+// Ligue ETHERNET_ENABLED em 1 quando a cadeira ganhar um ponto de rede com
+// cabo. O cabo passa a ser o caminho preferido e o Wi-Fi continua no ar como
+// reserva: se o cabo cair, o tráfego sai pelo Wi-Fi sem a cadeira ficar
+// offline; quando o cabo volta, volta a ser ele. Nada mais no firmware muda,
+// porque heartbeat, servidor HTTP e página local falam com a fachada de rede.
+//
+// Deixe as credenciais de Wi-Fi válidas mesmo usando cabo — é delas que a
+// reserva depende.
+//
+// O ESP32 desta placa é um DevKit comum, sem PHY RMII embarcado. O enlace
+// cabeado vem de um módulo W5500 externo, ligado por SPI. Confira os pinos
+// abaixo contra a fiação real antes de ligar.
+#define ETHERNET_ENABLED        1
 
 #if ETHERNET_ENABLED
-#include <ETH.h>
 
-// Endereço do PHY no barramento MDIO (0 ou 1 na maioria das placas LAN8720).
+// Barramento SPI que fala com o W5500. SPI3_HOST é o VSPI do ESP32; troque
+// para SPI2_HOST (HSPI) se o VSPI já estiver ocupado por outro periférico.
+#define ETH_SPI_HOST            SPI3_HOST
+
+// Pinos do barramento — estes são os defaults do VSPI.
+#define ETH_SPI_SCK_PIN         18
+#define ETH_SPI_MISO_PIN        19
+#define ETH_SPI_MOSI_PIN        23
+#define ETH_SPI_CS_PIN          5
+
+// O driver W5500 do ESP-IDF 4.4 é orientado a interrupção: não existe modo
+// polling. Este pino é obrigatório e precisa estar ligado ao INT do módulo.
+#define ETH_SPI_INT_PIN         4
+
+// Reset do módulo. -1 quando o RST não é controlado pelo ESP32.
+#define ETH_SPI_RST_PIN         14
+
+// Clock do SPI. O W5500 aguenta bem mais, mas fio comprido ou jumper solto
+// derruba o enlace antes de dar erro claro; 20 MHz é o ponto seguro.
+#define ETH_SPI_CLOCK_MHZ       20
+
+// Endereço do PHY interno do W5500. Sempre 1.
 #define ETH_PHY_ADDRESS         1
-// Pino que habilita o PHY. -1 quando ele é alimentado direto, sem controle.
-#define ETH_PHY_POWER_PIN       -1
-#define ETH_PHY_MDC_PIN         23
-#define ETH_PHY_MDIO_PIN        18
-#define ETH_PHY_TYPE            ETH_PHY_LAN8720
-// Origem do clock de 50 MHz. Trocar isto sem trocar a fiação deixa o PHY mudo.
-#define ETH_CLOCK_MODE          ETH_CLOCK_GPIO17_OUT
-// Espera pelo IP no boot. Cabo costuma subir mais rápido que o Wi-Fi.
+
+// Quanto o boot espera pelo IP do cabo antes de decidir se o Wi-Fi entra como
+// enlace principal ou só como reserva. Cabo costuma subir mais rápido que o
+// Wi-Fi, então esperar aqui sai barato.
 #define ETH_CONNECT_TIMEOUT_MS  10000UL
 #endif
 

@@ -58,7 +58,8 @@ function tick(){
     const dial=document.getElementById('dial'),timer=document.getElementById('timer');
     const status=document.getElementById('status'),btn=document.getElementById('btn');
     document.getElementById('meta').innerHTML =
-      'MAC '+d.mac+'<br>IP '+d.ip+' &middot; sinal '+d.rssi+' dBm<br>ligado ha '+
+      'MAC '+d.mac+'<br>IP '+d.ip+' &middot; '+d.link+
+      (d.link==='wi-fi'?' &middot; sinal '+d.rssi+' dBm':'')+'<br>ligado ha '+
       Math.floor(d.uptimeSeconds/60)+' min';
 
     if(d.phase==='idle'){
