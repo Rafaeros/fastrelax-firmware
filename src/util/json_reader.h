@@ -24,4 +24,14 @@ long readNumber(const String& body, const char* key, long fallback);
  */
 String readString(const String& body, const char* key);
 
+/**
+ * Valor booleano de `key` (`true`/`false`, sem aspas), ou `fallback` quando a
+ * chave não existe ou não é um dos dois literais.
+ *
+ * Entrou com POST /power e com a leitura da resposta do heartbeat — ambos
+ * trafegam `"active":true`/`false`, o único booleano que o firmware precisa
+ * ler (os que ele só escreve, como `"saved":true`, não passam por aqui).
+ */
+bool readBool(const String& body, const char* key, bool fallback);
+
 }  // namespace json

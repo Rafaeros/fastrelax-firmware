@@ -8,6 +8,7 @@
 //   POST /stop         desliga antes do previsto
 //   POST /relay-test   acionamento manual, para conferir a fiação
 //   POST /network      grava SSID, senha e BSSID da empresa na NVS
+//   POST /power        liga/desliga o relé de corte de energia do painel
 //   GET  /status       estado atual, para diagnóstico e para a página local
 //   GET  /             página local
 //

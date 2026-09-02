@@ -7,7 +7,9 @@
 #include "config.h"
 #include "network/network_config.h"
 #include "network/network_manager.h"
+#include "power/power_relay.h"
 #include "session/session_manager.h"
+#include "state/chair_state.h"
 #include "util/json_reader.h"
 
 namespace device_api {
@@ -140,6 +142,7 @@ void handleStatus() {
   json += "\"ssid\":\"" + network_config::current().ssid + "\",";
   json += "\"bssid\":\"" + network_config::current().bssid + "\",";
   json += "\"provisioned\":" + String(network_config::isProvisioned() ? "true" : "false") + ",";
+  json += "\"active\":" + String(chair_state::isActive() ? "true" : "false") + ",";
   json += "\"uptimeSeconds\":" + String(millis() / 1000);
   json += "}";
 
@@ -195,6 +198,30 @@ void handleNetwork() {
   }
 }
 
+/**
+ * Corpo: {"active":true}
+ *
+ * <p>
+ * Empurrado pelo backend logo depois do RH/Physical ativar ou desativar a
+ * cadeira — sem esperar o próximo heartbeat. Se a cadeira estiver offline
+ * agora, o heartbeat seguinte reconcilia sozinho (ver handleStatus e
+ * backend_client.cpp), então não há retry aqui: o backend também não espera,
+ * o toggle no banco já valeu.
+ */
+void handlePower() {
+  if (rejectUnauthorized()) {
+    return;
+  }
+
+  bool active = json::readBool(server.arg("plain"), "active", true);
+
+  chair_state::setActive(active);
+  power_relay::apply(active);
+
+  sendJson(200, String("{\"applied\":true,\"active\":") +
+                    (active ? "true" : "false") + "}");
+}
+
 void handleRoot() {
   server.send(200, "text/html", portal::pageHtml());
 }
@@ -208,6 +235,7 @@ void begin() {
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/relay-test", HTTP_POST, handleRelayTest);
   server.on("/network", HTTP_POST, handleNetwork);
+  server.on("/power", HTTP_POST, handlePower);
 
   // O WebServer descarta cabeçalhos não declarados, e é neste que vem o token.
   const char* headers[] = {"X-Device-Token"};

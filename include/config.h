@@ -178,6 +178,23 @@
 #define MQTT_STATUS_INTERVAL_MS 15000UL
 #endif
 
+// ---- Corte de energia do painel ----
+// Segundo relé, módulo idêntico ao de RELAY_PIN (mesmo GND/VCC/IN, ativo em
+// LOW). A diferença é o uso: aquele dá um pulso para apertar o botão; este
+// fica em nível contínuo, porque está em série com a alimentação do painel,
+// cabeado NC (contato fechado = painel energizado).
+//
+// Desativado (ChairService.active=false no backend) -> energiza o relé
+// (LOW) -> abre o NC -> corta o painel.
+// Ativado -> desenergiza (HIGH) -> NC fechado -> painel alimentado.
+//
+// Nunca pulsa: o nível fica sustentado até a próxima mudança de estado, e
+// sobrevive a reset/queda de energia porque o estado é lido da NVS no boot,
+// antes até de tentar Wi-Fi — ver src/state/chair_state.h.
+#define POWER_RELAY_PIN   27
+#define POWER_RELAY_ON    LOW
+#define POWER_RELAY_OFF   HIGH
+
 // ---- Estabilização entre sessões ----
 // Depois do pulso que desliga, a cadeira precisa de um tempo parada antes de
 // aceitar o próximo acionamento: ela recolhe os mecanismos e volta à posição

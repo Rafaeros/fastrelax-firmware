@@ -78,4 +78,30 @@ String readString(const String& body, const char* key) {
   return value;
 }
 
+bool readBool(const String& body, const char* key, bool fallback) {
+  String needle = "\"" + String(key) + "\"";
+  int keyAt = body.indexOf(needle);
+  if (keyAt < 0) {
+    return fallback;
+  }
+
+  int colonAt = body.indexOf(':', keyAt + needle.length());
+  if (colonAt < 0) {
+    return fallback;
+  }
+
+  int cursor = colonAt + 1;
+  while (cursor < (int)body.length() && body[cursor] == ' ') {
+    cursor++;
+  }
+
+  if (body.startsWith("true", cursor)) {
+    return true;
+  }
+  if (body.startsWith("false", cursor)) {
+    return false;
+  }
+  return fallback;
+}
+
 }  // namespace json

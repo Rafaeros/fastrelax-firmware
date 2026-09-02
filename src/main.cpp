@@ -8,7 +8,9 @@
 //
 // Este arquivo só faz a montagem. Cada responsabilidade vive no seu módulo:
 //
-//   relay/     acionamento do pino
+//   relay/     acionamento do pino que aperta o botão da cadeira
+//   power/     relé de corte de energia do painel (nível contínuo, não pulso)
+//   state/     ativado/desativado persistido na NVS, para o corte sobreviver a reset
 //   session/   máquina de estados do tempo de uso
 //   network/   enlace (cabo preferido, Wi-Fi de reserva) e reconexão
 //   backend/   heartbeat com o fastrelax-api
@@ -28,8 +30,10 @@
 #include "backend/backend_client.h"
 #include "mqtt/mqtt_client.h"
 #include "network/network_manager.h"
+#include "power/power_relay.h"
 #include "relay/relay.h"
 #include "session/session_manager.h"
+#include "state/chair_state.h"
 #include "util/identity.h"
 
 namespace {
@@ -54,6 +58,11 @@ void setup() {
 
   relay::begin();
   session::begin();
+
+  // Antes de qualquer rede: uma queda de energia não pode deixar o painel
+  // ligado numa cadeira que a Physical desativou.
+  chair_state::begin();
+  power_relay::begin();
 
   network::setEventHandlers(onNetworkLost, onNetworkBack);
   network::begin();

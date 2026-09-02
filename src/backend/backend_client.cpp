@@ -4,10 +4,13 @@
 #include <HTTPClient.h>
 
 #include "util/identity.h"
+#include "util/json_reader.h"
 #include "config.h"
 #include "network/network_config.h"
 #include "network/network_manager.h"
+#include "power/power_relay.h"
 #include "session/session_manager.h"
+#include "state/chair_state.h"
 
 namespace backend {
 namespace {
@@ -22,6 +25,27 @@ bool registeredInBackend = false;
 String heartbeatUrl() {
   return "http://" + String(BACKEND_HOST) + ":" + String(BACKEND_PORT) +
          String(BACKEND_PATH) + "/chairs/heartbeat";
+}
+
+/**
+ * Aplica o `active` que veio dentro de `data` na resposta do heartbeat.
+ *
+ * É a rede de segurança do POST /power: se a cadeira estava offline no
+ * instante em que a Physical ativou/desativou, o push direto não chegou —
+ * mas o próximo heartbeat que ela conseguir mandar já vem com o estado
+ * correto do banco, e é aqui que ele é lido e aplicado.
+ *
+ * `readBool` procura a chave em qualquer lugar do corpo, então funciona
+ * mesmo com `active` aninhado dentro de `data` — não precisa saber a
+ * estrutura exata do envelope, só que a chave aparece uma vez.
+ */
+void reconcileActivation(const String& responseBody) {
+  bool active = json::readBool(responseBody, "active", chair_state::isActive());
+  if (chair_state::setActive(active)) {
+    power_relay::apply(active);
+    Serial.printf("heartbeat: estado de ativacao reconciliado -> %s\n",
+                  active ? "ativa" : "desativada");
+  }
 }
 
 }  // namespace
@@ -81,6 +105,8 @@ void sendHeartbeat() {
   int code = http.POST(payload);
 
   if (code == 200) {
+    reconcileActivation(http.getString());
+
     if (!registeredInBackend) {
       registeredInBackend = true;
       Serial.println("heartbeat: cadeira reconhecida pelo backend");
