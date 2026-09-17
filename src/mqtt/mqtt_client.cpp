@@ -33,8 +33,13 @@
 #include <WiFiClientSecure.h>
 #endif
 
+#include "mqtt/mqtt_config.h"
+#include "network/network_config.h"
 #include "network/network_manager.h"
+#include "power/power_relay.h"
 #include "session/session_manager.h"
+#include "state/chair_state.h"
+#include "util/device_identity.h"
 #include "util/json_reader.h"
 
 namespace mqtt {
@@ -50,6 +55,12 @@ PubSubClient client(transport);
 
 unsigned long lastAttemptMs = 0;
 unsigned long lastStatusMs = 0;
+
+// PubSubClient::setServer(const char*, uint16_t) guarda o ponteiro, não uma
+// cópia — precisa de um buffer que sobreviva além do escopo de connect().
+// Uma String local ali seria destruída ao sair da função, deixando o
+// ponteiro pendurado até a tentativa seguinte chamar setServer() de novo.
+String brokerHost;
 
 /**
  * Identificador da cadeira nos tópicos: MAC em minúsculas, sem os dois-pontos.
@@ -92,7 +103,7 @@ bool authorized(const String& payload) {
   if (lastQuote < 0) {
     return false;
   }
-  return payload.substring(firstQuote + 1, lastQuote) == String(DEVICE_TOKEN);
+  return payload.substring(firstQuote + 1, lastQuote) == device_identity::token();
 }
 
 /** Devolve o desfecho do comando, para o backend não ficar cego. */
@@ -150,6 +161,90 @@ void handleRelayTestCommand(const String& payload) {
   publishStatus();
 }
 
+/**
+ * Corpo: {"token":"...","ssid":"REDE","password":"senha","bssid":"AA:BB:..."}
+ *
+ * Espelha handleNetwork() de device_server.cpp: grava na NVS e reconecta. O
+ * ack sai *antes* de aplicar a config, pelo mesmo motivo do HTTP — a troca de
+ * rede pode derrubar o próprio canal que carregou o comando.
+ */
+void handleNetworkCommand(const String& payload) {
+  String ssid = json::readString(payload, "ssid");
+  String password = json::readString(payload, "password");
+  String bssid = json::readString(payload, "bssid");
+
+  if (ssid.isEmpty()) {
+    replyToCommand("ssid_required");
+    return;
+  }
+
+  uint8_t parsed[6];
+  if (!bssid.isEmpty() && !network_config::parseBssid(bssid, parsed)) {
+    replyToCommand("invalid_bssid");
+    return;
+  }
+
+  bool changed = network_config::save(ssid, password, bssid);
+  publish("ack", "{\"status\":\"network_saved\",\"changed\":" +
+                     String(changed ? "true" : "false") + ",\"ssid\":\"" + ssid + "\"}",
+          false);
+
+  if (changed) {
+    network::applyConfig();
+  }
+}
+
+/**
+ * Corpo: {"token":"...","host":"...","port":1883,"username":"...","password":"..."}
+ *
+ * Espelha handleMqtt() de device_server.cpp: grava o broker na NVS e força
+ * reconexão. O ack sai antes de aplicar, mesmo motivo do /network — embora
+ * aqui a troca de broker não derrube o canal que carregou o comando (o ack
+ * já foi publicado no broker atual antes de mqtt::applyConfig() desconectar).
+ */
+void handleMqttCommand(const String& payload) {
+  String host = json::readString(payload, "host");
+  long port = json::readNumber(payload, "port", 0);
+  String username = json::readString(payload, "username");
+  String password = json::readString(payload, "password");
+
+  if (host.isEmpty()) {
+    replyToCommand("host_required");
+    return;
+  }
+
+  if (port < 0 || port > 65535) {
+    replyToCommand("invalid_port");
+    return;
+  }
+
+  bool changed = mqtt_config::save(host, static_cast<uint16_t>(port), username, password);
+  publish("ack", "{\"status\":\"mqtt_saved\",\"changed\":" +
+                     String(changed ? "true" : "false") + ",\"host\":\"" + host + "\"}",
+          false);
+
+  if (changed) {
+    applyConfig();
+  }
+}
+
+/**
+ * Corpo: {"token":"...","active":true}
+ *
+ * Espelha handlePower() de device_server.cpp: liga/desliga o relé de corte de
+ * energia do painel.
+ */
+void handlePowerCommand(const String& payload) {
+  bool active = json::readBool(payload, "active", true);
+
+  chair_state::setActive(active);
+  power_relay::apply(active);
+
+  publish("ack", "{\"status\":\"power_applied\",\"active\":" +
+                     String(active ? "true" : "false") + "}",
+          false);
+}
+
 void onMessage(char* topic, byte* payload, unsigned int length) {
   String body;
   body.reserve(length);
@@ -178,6 +273,12 @@ void onMessage(char* topic, byte* payload, unsigned int length) {
     publishStatus();
   } else if (command == "relay-test") {
     handleRelayTestCommand(body);
+  } else if (command == "network") {
+    handleNetworkCommand(body);
+  } else if (command == "mqtt") {
+    handleMqttCommand(body);
+  } else if (command == "power") {
+    handlePowerCommand(body);
   } else {
     Serial.printf("mqtt: comando desconhecido: %s\n", command.c_str());
   }
@@ -189,14 +290,22 @@ void onMessage(char* topic, byte* payload, unsigned int length) {
  * detectada em segundos, contra os três minutos que o heartbeat HTTP leva.
  */
 bool connect() {
+  // Relê a NVS a cada tentativa, igual wifi_link.cpp faz com a rede: se o
+  // backend gravou host/usuário/senha novos enquanto a cadeira estava sem
+  // broker, a próxima tentativa já usa a configuração nova, sem reiniciar.
+  mqtt_config::Credentials creds = mqtt_config::current();
+
   String base = baseTopic();
   String willTopic = base + "/online";
   String clientId = String(DEVICE_HOSTNAME) + "-" + deviceId();
 
-  Serial.printf("mqtt: conectando em %s:%d...\n", MQTT_HOST, MQTT_PORT);
+  Serial.printf("mqtt: conectando em %s:%d...\n", creds.host.c_str(), creds.port);
 
-  bool connected = client.connect(clientId.c_str(), MQTT_USERNAME, MQTT_PASSWORD,
-                                  willTopic.c_str(), MQTT_QOS, true, "offline");
+  brokerHost = creds.host;
+  client.setServer(brokerHost.c_str(), creds.port);
+  bool connected = client.connect(clientId.c_str(), creds.username.c_str(),
+                                  creds.password.c_str(), willTopic.c_str(), MQTT_QOS,
+                                  true, "offline");
 
   if (!connected) {
     Serial.printf("mqtt: falhou (state %d)\n", client.state());
@@ -227,7 +336,8 @@ void begin() {
 #endif
 #endif
 
-  client.setServer(MQTT_HOST, MQTT_PORT);
+  // setServer real acontece em connect(), a cada tentativa, com o host/porta
+  // que estiverem valendo na NVS naquele momento.
   client.setCallback(onMessage);
   client.setKeepAlive(MQTT_KEEPALIVE_SECONDS);
   // O padrão da biblioteca são 256 bytes, folga pequena demais para o payload
@@ -263,6 +373,16 @@ void loop() {
 
 bool isConnected() {
   return client.connected();
+}
+
+void applyConfig() {
+  Serial.println("mqtt: aplicando configuracao de broker recebida");
+  if (client.connected()) {
+    client.disconnect();
+  }
+  // Próximo loop() já tenta de novo, sem esperar MQTT_RETRY_MS: a config
+  // acabou de chegar, não faz sentido segurar a reconexão.
+  lastAttemptMs = 0;
 }
 
 bool publishStatus() {
@@ -303,6 +423,7 @@ namespace mqtt {
 void begin() {}
 void loop() {}
 bool isConnected() { return false; }
+void applyConfig() {}
 bool publishStatus() { return false; }
 bool publish(const char*, const String&, bool) { return false; }
 

@@ -1,6 +1,7 @@
 #include "api/portal_page.h"
 
 #include "config.h"
+#include "util/device_identity.h"
 
 namespace portal {
 
@@ -46,7 +47,7 @@ String pageHtml() {
 <script>
 const TOKEN = ')=====";
 
-  html += String(DEVICE_TOKEN);
+  html += device_identity::token();
 
   html += R"=====(';
 async function stopSession(){

@@ -9,14 +9,39 @@
 
 // ---- Rede ----
 // Rede de primeiro boot, e só isso. A partir do momento em que o backend envia
-// POST /network, SSID, senha e BSSID passam a viver na NVS e estes valores não
-// são mais consultados — ver src/network/network_config.h.
+// POST /network, SSID, senha e BSSID passam a viver na NVS e os três valores
+// abaixo não são mais consultados — ver src/network/network_config.h.
 //
 // Uma placa recém-gravada precisa entrar em *alguma* rede para conseguir
 // receber a configuração de verdade; é para isso que eles existem. Aponte para
 // a rede da bancada, não para a do cliente.
 #define WIFI_SSID       "LANX CABLES"
 #define WIFI_PASSWORD   "Lanx@2029"
+
+// BSSID de fábrica: o MAC do ponto de acesso em que a cadeira deve entrar no
+// primeiro boot. Vale em planta com vários APs no mesmo SSID — sem fixar, a
+// cadeira pode grudar num ponto distante e ficar com sinal ruim tendo um AP a
+// três metros.
+//
+// Deixe "" para não fixar nada e deixar o ESP32 escolher o de melhor sinal.
+// Como o SSID e a senha, é sobrescrito pelo POST /network do backend e deixa de
+// ser consultado. Formato AA:BB:CC:DD:EE:FF (ou com hífens).
+//
+// MAC errado aqui não deixa a cadeira offline: o firmware ignora o que não
+// consegue interpretar e conecta pelo SSID assim mesmo — ver wifi_link.cpp.
+#define WIFI_BSSID      ""
+
+// Escotilha de bancada: em 1, a configuração gravada na NVS é ignorada e valem
+// os três valores acima, mesmo numa cadeira já provisionada.
+//
+// Existe porque a NVS sobrevive à regravação do firmware. Uma cadeira
+// provisionada para uma rede que não existe mais fica sem Wi-Fi e sem cabo — e
+// sem rede não há como mandar o POST /network/reset que apagaria a NVS. Sem
+// esta escotilha a única saída seria apagar a partição NVS pelo esptool.
+//
+// Volte para 0 antes de gravar uma cadeira que vai para o cliente: em 1 ela
+// ignora para sempre o que o backend mandar.
+#define WIFI_FORCE_FACTORY 0
 
 // Nome que aparece no DHCP do roteador — facilita localizar a cadeira na rede.
 #define DEVICE_HOSTNAME "fastrelax-chair-01"
@@ -28,9 +53,10 @@
 #define BACKEND_PORT    8090
 #define BACKEND_PATH    "/api/v1"
 
-// Mesmo valor de CHAIR_DEVICE_TOKEN no .env do backend. Usado nos dois
-// sentidos: o ESP32 envia no heartbeat e confere nos comandos que recebe.
-#define DEVICE_TOKEN    "123d5f84b77a959d33971c7aa39841cdebead7beb4109f2cfc25c3c5ea8a7740"
+// Sem DEVICE_TOKEN aqui: cada cadeira gera o próprio, sozinha, no primeiro
+// boot (RNG de hardware, gravado na NVS) — ver src/util/device_identity.h. O
+// backend pareia com ele no primeiro heartbeat. Nada para configurar neste
+// arquivo.
 
 // ---- Hardware ----
 // O relé fica em paralelo com o botão de liga/desliga da cadeira: fechar o
@@ -58,12 +84,12 @@
 // batidas dentro dessa janela para tolerar uma perda ocasional
 #define HEARTBEAT_INTERVAL_MS   60000UL
 
-// Espera entre tentativas de reconexão do Wi-Fi.
-#define WIFI_RETRY_MS           10000UL
-
 // Quanto o boot espera pela primeira conexão antes de seguir em frente. Não
 // conectar não impede o firmware de subir: o relé e a página local funcionam,
-// e a reconexão continua em background.
+// e a reconexão continua em background. O mesmo valor também é a janela dada
+// a cada tentativa de reconexão em background — usar algo menor derrubava a
+// tentativa no meio do caminho (scan+auth+assoc+DHCP) antes dela terminar,
+// travando a cadeira num loop que nunca completa uma conexão.
 #define WIFI_CONNECT_TIMEOUT_MS 20000UL
 
 // Teto absoluto de acionamento. Se chegar um comando com duração excessiva, ou
@@ -128,7 +154,7 @@
 // para mandar /start; com MQTT é a cadeira que abre e mantém a conexão, então
 // o comando chega mesmo atrás de NAT ou em outra VLAN. Ligue MQTT_ENABLED em 1
 // para ativar — o HTTP continua funcionando em paralelo.
-#define MQTT_ENABLED            0
+#define MQTT_ENABLED            1
 
 #if MQTT_ENABLED
 // Endereço do broker.
@@ -143,8 +169,8 @@
 
 // Credenciais do broker. No RabbitMQ são as mesmas do AMQP; no HiveMQ saem do
 // painel de Access Management.
-#define MQTT_USERNAME           "fastrelax-chair"
-#define MQTT_PASSWORD           "TROQUE"
+#define MQTT_USERNAME           "fastrelax"
+#define MQTT_PASSWORD           "159157"
 
 // Certificado raiz do broker, em PEM. Sem ele e com TLS ligado o firmware
 // conecta sem validar — bom para um teste, ruim para deixar assim: sem
@@ -155,9 +181,11 @@
 //   <prefixo>/<mac>/status      estado da sessão, retido (cadeira -> backend)
 //   <prefixo>/<mac>/online      "online"/"offline", retido, com Last Will
 //   <prefixo>/<mac>/ack         desfecho do último comando
-//   <prefixo>/<mac>/cmd/start   {"token":"...","sessionId":1,"durationSeconds":300}
-//   <prefixo>/<mac>/cmd/stop    {"token":"..."}
-//   <prefixo>/<mac>/cmd/relay-test  {"token":"...","durationSeconds":10}
+//   <prefixo>/<mac>/cmd/start        {"token":"...","sessionId":1,"durationSeconds":300}
+//   <prefixo>/<mac>/cmd/stop         {"token":"..."}
+//   <prefixo>/<mac>/cmd/relay-test   {"token":"...","durationSeconds":10}
+//   <prefixo>/<mac>/cmd/network      {"token":"...","ssid":"...","password":"...","bssid":"..."}
+//   <prefixo>/<mac>/cmd/power        {"token":"...","active":true}
 // No RabbitMQ estes viram routing keys no exchange amq.topic com '.' no lugar
 // de '/' — o backend consome por AMQP normal, sem falar MQTT.
 #define MQTT_TOPIC_PREFIX       "fastrelax/chairs"

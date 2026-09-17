@@ -43,10 +43,16 @@ const char* WifiLink::name() const {
 void WifiLink::startAsync() {
   network_config::Credentials creds = network_config::current();
 
-  Serial.printf("conectando em %s%s...\n", creds.ssid.c_str(),
-                network_config::isProvisioned() ? "" : " (padrao de fabrica)");
+  // A origem no log não é decoração: a NVS sobrevive à regravação, então uma
+  // cadeira provisionada ignora o config.h para sempre. Sem dizer de onde veio o
+  // SSID, quem editou o config.h e não viu efeito conclui que o firmware está
+  // quebrado, quando na verdade está fazendo o certo.
+  bool provisioned = network_config::isProvisioned();
+  Serial.printf("conectando em %s (%s)...\n", creds.ssid.c_str(),
+                provisioned ? "gravado na NVS pelo backend" : "padrao de fabrica");
   if (!creds.bssid.isEmpty()) {
-    Serial.printf("ponto de acesso fixado em %s\n", creds.bssid.c_str());
+    Serial.printf("ponto de acesso fixado em %s (%s)\n", creds.bssid.c_str(),
+                  provisioned ? "NVS" : "config.h");
   }
 
   WiFi.mode(WIFI_STA);
@@ -73,7 +79,7 @@ void WifiLink::begin() {
     // Sem rede o IP ainda não existe, mas o MAC já vale para adiantar o cadastro.
     Serial.printf("MAC address: %s\n", macAddress().c_str());
     // Já gastamos a janela do boot esperando: a próxima tentativa é imediata,
-    // não daqui a WIFI_RETRY_MS.
+    // não daqui a WIFI_CONNECT_TIMEOUT_MS.
     lastAttemptMs_ = 0;
   }
 }
@@ -104,7 +110,14 @@ void WifiLink::loop() {
     return;
   }
 
-  if (now - lastAttemptMs_ < WIFI_RETRY_MS) {
+  // O begin() dado em connectWith() ainda pode estar em andamento — scan,
+  // autenticação, associação e DHCP às vezes passam de 10s, principalmente com
+  // sinal fraco ou o AP ainda subindo depois de um reboot. Usar uma janela
+  // menor aqui derrubava a tentativa no meio do caminho a cada ciclo, para
+  // sempre: o boot dava a conexão inicial os WIFI_CONNECT_TIMEOUT_MS cheios,
+  // mas o background só dava uma fração disso — por isso conectava no boot
+  // mas nunca em background depois de uma queda.
+  if (now - lastAttemptMs_ < WIFI_CONNECT_TIMEOUT_MS) {
     return;
   }
 

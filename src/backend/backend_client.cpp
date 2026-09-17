@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <HTTPClient.h>
 
+#include "util/device_identity.h"
 #include "util/identity.h"
 #include "util/json_reader.h"
 #include "config.h"
@@ -81,7 +82,7 @@ void sendHeartbeat() {
   }
 
   http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-Device-Token", DEVICE_TOKEN);
+  http.addHeader("X-Device-Token", device_identity::token());
 
   // A fase vai junto para o backend saber o estado sem perguntar. É o que
   // separa "a cadeira recusou porque está estabilizando" de "a cadeira não
@@ -114,7 +115,11 @@ void sendHeartbeat() {
       Serial.println("heartbeat: ok");
     }
   } else if (code == 401) {
-    Serial.println("heartbeat: token recusado — confira DEVICE_TOKEN no config.h");
+    // Depois do primeiro pareamento, só acontece se a NVS de identidade foi
+    // apagada (ou a placa foi trocada) sem o backend saber — ele ainda espera
+    // o token antigo. Não há rota para "esquecer" o pareamento ainda; hoje o
+    // jeito é limpar chairs.device_token_encrypted direto no banco.
+    Serial.println("heartbeat: token recusado — cadeira pareada com outro token no backend");
   } else if (code == 404) {
     // Repete a identificação: é exatamente o dado que falta para resolver.
     registeredInBackend = false;

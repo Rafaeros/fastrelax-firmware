@@ -80,6 +80,20 @@ int hexValue(char digit) {
 Credentials current() {
   Credentials stored;
 
+#if WIFI_FORCE_FACTORY
+  // Nem abre a NVS: o ponto da escotilha é funcionar mesmo com a NVS gravada
+  // para uma rede inalcançável, que é justamente quando não há como apagá-la
+  // pela rede.
+  Serial.println(
+      "WIFI_FORCE_FACTORY: ignorando a NVS e usando config.h"
+  );
+
+  stored.ssid = WIFI_SSID;
+  stored.password = WIFI_PASSWORD;
+  stored.bssid = WIFI_BSSID;
+
+  return stored;
+#else
   Scope scope(false);
 
   if (!scope.opened) {
@@ -89,7 +103,7 @@ Credentials current() {
 
     stored.ssid = WIFI_SSID;
     stored.password = WIFI_PASSWORD;
-    stored.bssid = "";
+    stored.bssid = WIFI_BSSID;
 
     return stored;
   }
@@ -108,14 +122,22 @@ Credentials current() {
   }
 
   // Cadeira ainda não provisionada.
-  // Usa os valores padrão do config.h.
+  // Usa SSID e senha padrão do config.h.
   if (stored.ssid.isEmpty()) {
     stored.ssid = WIFI_SSID;
     stored.password = WIFI_PASSWORD;
-    stored.bssid = "";
+  }
+
+  // Sem BSSID gravado — seja porque a cadeira nunca foi provisionada, seja
+  // porque foi, mas o backend nunca fixou um ponto de acesso — cai no de
+  // fábrica. Só fica de fato vazio (ESP32 escolhe o de melhor sinal) quando
+  // nem o config.h define um.
+  if (stored.bssid.isEmpty()) {
+    stored.bssid = WIFI_BSSID;
   }
 
   return stored;
+#endif
 }
 
 // =========================================================================
@@ -123,6 +145,12 @@ Credentials current() {
 // =========================================================================
 
 bool isProvisioned() {
+#if WIFI_FORCE_FACTORY
+  // A NVS pode até estar gravada, mas não é ela que está no ar. Responder
+  // "provisionada" aqui faria o log e o /status contarem uma rede que a cadeira
+  // não está usando.
+  return false;
+#else
   Scope scope(false);
 
   if (!scope.opened) {
@@ -131,6 +159,7 @@ bool isProvisioned() {
 
   return prefs.isKey(kSsidKey) &&
          !prefs.getString(kSsidKey, "").isEmpty();
+#endif
 }
 
 // =========================================================================

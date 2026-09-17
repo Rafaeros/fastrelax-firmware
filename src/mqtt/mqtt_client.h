@@ -30,6 +30,16 @@ void loop();
 bool isConnected();
 
 /**
+ * Derruba a conexão atual para forçar reconexão imediata com a configuração
+ * mais recente da NVS (ver mqtt_config.h).
+ *
+ * Espelha network::applyConfig(): quem grava um host/usuário/senha novo via
+ * POST /mqtt precisa chamar isto depois, senão o cliente só percebe a
+ * mudança na próxima falha de keep-alive.
+ */
+void applyConfig();
+
+/**
  * Publica o estado atual da sessão em `<prefixo>/<mac>/status`, retido.
  * Quem assinar depois recebe o último estado sem esperar o próximo ciclo.
  */

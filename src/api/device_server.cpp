@@ -5,11 +5,14 @@
 
 #include "api/portal_page.h"
 #include "config.h"
+#include "mqtt/mqtt_client.h"
+#include "mqtt/mqtt_config.h"
 #include "network/network_config.h"
 #include "network/network_manager.h"
 #include "power/power_relay.h"
 #include "session/session_manager.h"
 #include "state/chair_state.h"
+#include "util/device_identity.h"
 #include "util/json_reader.h"
 
 namespace device_api {
@@ -26,7 +29,7 @@ bool authorized() {
   if (!server.hasHeader("X-Device-Token")) {
     return false;
   }
-  return server.header("X-Device-Token") == String(DEVICE_TOKEN);
+  return server.header("X-Device-Token") == device_identity::token();
 }
 
 /** Responde 401 e devolve false quando o token não confere. */
@@ -199,6 +202,104 @@ void handleNetwork() {
 }
 
 /**
+ * Apaga a configuração de rede gravada e volta a valer o config.h.
+ *
+ * <p>
+ * Existe porque a NVS sobrevive à regravação do firmware: uma cadeira
+ * provisionada para a rede errada não volta ao padrão de fábrica nem
+ * recompilando o config.h, e sem isto a única saída seria apagar a partição NVS
+ * pelo esptool, com a cadeira na bancada.
+ *
+ * <p>
+ * A reconexão não é disparada aqui: a resposta precisa sair pela rede atual
+ * antes de a cadeira trocar de AP. O enlace é reaplicado logo em seguida.
+ */
+void handleNetworkReset() {
+  if (rejectUnauthorized()) {
+    return;
+  }
+
+  network_config::clear();
+
+  sendJson(200, String("{\"cleared\":true,\"ssid\":\"") + WIFI_SSID + "\"}");
+
+  network::applyConfig();
+}
+
+/**
+ * Corpo: {"host":"10.48.0.189","port":1883,"username":"fastrelax","password":"..."}
+ *
+ * <p>
+ * Grava o broker MQTT desta cadeira na NVS e força reconexão. É o que
+ * substitui recompilar o firmware com a credencial de config.h só pra trocar
+ * o broker de um device específico — por padrão nenhuma cadeira chama isto e
+ * todas usam o mesmo broker de config.h; só passa a ser por device quando o
+ * backend grava algo aqui.
+ *
+ * <p>
+ * `port` é opcional: omitido ou 0 mantém a porta já gravada (ou a de
+ * config.h, se nunca provisionada).
+ *
+ * <p>
+ * A resposta nunca inclui a senha, nem a recebida nem a antiga — mesmo
+ * critério do MAC/token: nada que dê acesso ao broker deve passar por uma
+ * rota que ecoa em log de proxy ou console do navegador.
+ */
+void handleMqtt() {
+  if (rejectUnauthorized()) {
+    return;
+  }
+
+  String body = server.arg("plain");
+  String host = json::readString(body, "host");
+  long port = json::readNumber(body, "port", 0);
+  String username = json::readString(body, "username");
+  String password = json::readString(body, "password");
+
+  if (host.isEmpty()) {
+    sendJson(400, "{\"error\":\"host_required\"}");
+    return;
+  }
+
+  if (port < 0 || port > 65535) {
+    sendJson(400, "{\"error\":\"invalid_port\"}");
+    return;
+  }
+
+  bool changed = mqtt_config::save(host, static_cast<uint16_t>(port), username, password);
+
+  sendJson(200, String("{\"saved\":true,\"changed\":") + (changed ? "true" : "false") +
+                    ",\"host\":\"" + host + "\"}");
+
+  if (changed) {
+    // Mesmo motivo do /network: a resposta sai antes de derrubar o canal que
+    // a troca de broker pode afetar (se o comando tivesse vindo por MQTT — por
+    // HTTP não tem esse risco, mas o padrão fica igual em toda a API).
+    mqtt::applyConfig();
+  }
+}
+
+/**
+ * Apaga a configuração de MQTT gravada e volta a valer o broker de config.h.
+ *
+ * <p>
+ * Mesmo motivo de /network/reset: a NVS sobrevive à regravação do firmware,
+ * então uma cadeira provisionada pro broker errado não volta ao padrão só
+ * recompilando.
+ */
+void handleMqttReset() {
+  if (rejectUnauthorized()) {
+    return;
+  }
+
+  mqtt_config::clear();
+
+  sendJson(200, String("{\"cleared\":true,\"host\":\"") + MQTT_HOST + "\"}");
+
+  mqtt::applyConfig();
+}
+
+/**
  * Corpo: {"active":true}
  *
  * <p>
@@ -235,6 +336,9 @@ void begin() {
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/relay-test", HTTP_POST, handleRelayTest);
   server.on("/network", HTTP_POST, handleNetwork);
+  server.on("/network/reset", HTTP_POST, handleNetworkReset);
+  server.on("/mqtt", HTTP_POST, handleMqtt);
+  server.on("/mqtt/reset", HTTP_POST, handleMqttReset);
   server.on("/power", HTTP_POST, handlePower);
 
   // O WebServer descarta cabeçalhos não declarados, e é neste que vem o token.
