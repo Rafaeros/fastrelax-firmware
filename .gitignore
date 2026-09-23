@@ -3,3 +3,7 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# Credenciais reais de Wi-Fi/MQTT da instalação. Cada bancada/cliente mantém
+# a própria cópia local, criada a partir de include/config.h.example.
+include/config.h
